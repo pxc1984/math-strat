@@ -1,6 +1,6 @@
 use crate::format;
 use colored::Colorize;
-use std::io::Write;
+use std::io::{self, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
@@ -52,20 +52,31 @@ fn render_progress_line(progress: &ProgressTracker) -> String {
     )
 }
 
-pub fn start_progress_reporter(progress: Arc<ProgressTracker>) -> thread::JoinHandle<()> {
-    print!("{}", render_progress_line(&progress));
-    let _ = std::io::stdout().flush();
+fn write_progress_line(progress: &ProgressTracker) -> io::Result<()> {
+    let mut stdout = io::stdout();
+    write!(stdout, "{}", render_progress_line(progress))?;
+    stdout.flush()
+}
 
-    thread::spawn(move || {
+fn finish_progress_line(progress: &ProgressTracker) -> io::Result<()> {
+    let mut stdout = io::stdout();
+    write!(stdout, "{}", render_progress_line(progress))?;
+    writeln!(stdout)
+}
+
+pub fn start_progress_reporter(
+    progress: Arc<ProgressTracker>,
+) -> io::Result<thread::JoinHandle<io::Result<()>>> {
+    write_progress_line(&progress)?;
+
+    Ok(thread::spawn(move || {
         while !progress.finished.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(100));
-            print!("{}", render_progress_line(&progress));
-            let _ = std::io::stdout().flush();
+            write_progress_line(&progress)?;
         }
 
-        print!("{}", render_progress_line(&progress));
-        println!();
-    })
+        finish_progress_line(&progress)
+    }))
 }
 
 const PROGRESS_BAR_WIDTH: usize = 10;

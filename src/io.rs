@@ -1,43 +1,57 @@
 use colored::{Color, ColoredString, Colorize};
-use std::io::Write;
+use std::fmt::Display;
+use std::io::{self, Write};
 
-pub fn read_target_score() -> Option<f64> {
+pub fn read_target_score() -> io::Result<f64> {
     loop {
-        print!(
+        let mut stdout = io::stdout();
+        write!(
+            stdout,
             "{} {}: ",
             "Введите желаемый балл",
             "(например 3.5)".cyan().bold()
-        );
-        std::io::stdout().flush().expect("failed to flush stdout");
+        )?;
+        stdout.flush()?;
 
         let mut input = String::new();
-        std::io::stdin()
-            .read_line(&mut input)
-            .expect("failed to read target score");
+        let bytes_read = io::stdin().read_line(&mut input)?;
+        if bytes_read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "ввод прерван до чтения целевого балла",
+            ));
+        }
 
         let trimmed = input.trim();
         if trimmed.is_empty() {
-            println!(
-                "{}",
-                status_line(
-                    "warning:",
-                    Color::Yellow,
-                    "Пустой ввод. Попробуйте еще раз."
-                )
-            );
+            write_line(status_line(
+                "warning:",
+                Color::Yellow,
+                "Пустой ввод. Попробуйте еще раз.",
+            ))?;
             continue;
         }
 
         let normalized = trimmed.replace(',', ".");
         match normalized.parse::<f64>() {
-            Ok(value) if value >= 0.0 => return Some(value),
-            _ => println!(
+            Ok(value) if value >= 0.0 => return Ok(value),
+            _ => write_line(format!(
                 "{} {}",
                 status_line("error:", Color::Red, "Не удалось распознать число."),
                 "Пример: 4 или 3.5".cyan().bold()
-            ),
+            ))?,
         }
     }
+}
+
+pub fn write_line(message: impl Display) -> io::Result<()> {
+    let mut stdout = io::stdout();
+    writeln!(stdout, "{message}")
+}
+
+pub fn write_error_line(message: impl Display) -> io::Result<()> {
+    let mut stderr = io::stderr();
+    writeln!(stderr, "{message}")
 }
 
 pub fn label(text: &str, color: Color) -> ColoredString {

@@ -1,9 +1,16 @@
-pub fn pause_before_exit() {
+use std::io;
+
+pub fn pause_before_exit() -> io::Result<()> {
     #[cfg(windows)]
     {
-        print!("\nНажмите Enter, чтобы закрыть окно...");
-        let _ = io::stdout().flush();
+        use std::io::Write;
+
+        let mut stdout = io::stdout();
+        write!(stdout, "\nНажмите Enter, чтобы закрыть окно...")?;
+        stdout.flush()?;
         let mut buffer = String::new();
-        let _ = io::stdin().read_line(&mut buffer);
+        io::stdin().read_line(&mut buffer)?;
     }
+
+    Ok(())
 }

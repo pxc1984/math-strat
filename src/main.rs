@@ -10,16 +10,20 @@ use consts::{
 use progress::ProgressTracker;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::process::ExitCode;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 mod cache;
 mod consts;
+mod error;
 mod format;
 mod helpers;
 mod hooks;
 mod io;
 mod progress;
+
+use error::AppError;
 
 type Outcomes = Vec<(u8, f64)>;
 type Distribution = [f64; MAX_TOTAL_SCORE + 1];
@@ -401,60 +405,69 @@ fn resolve_requested_score(target: f64) -> Option<usize> {
     Some(target.ceil() as usize)
 }
 
-fn main() {
-    println!(
-        "{}",
-        io::status_line("Запуск", Color::Magenta, "Стратегия на красный матан")
-    );
-    println!(
-        "{}",
-        io::status_line("Кэш", Color::Cyan, "Происходит прогрев кэша (гоев)")
-    );
-    println!(
-        "{}",
-        io::status_line(
-            "Кэш",
-            Color::Cyan,
-            "Немного подождите... (это один раз происходит)"
-        )
-    );
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            if let Err(report_error) =
+                io::write_error_line(io::status_line("error:", Color::Red, format!("{error}")))
+            {
+                drop(report_error);
+            }
+
+            if let Err(pause_error) = hooks::pause_before_exit() {
+                drop(pause_error);
+            }
+
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<(), AppError> {
+    io::write_line(io::status_line(
+        "Запуск",
+        Color::Magenta,
+        "Стратегия на красный матан",
+    ))?;
+    io::write_line(io::status_line(
+        "Кэш",
+        Color::Cyan,
+        "Происходит прогрев кэша (гоев)",
+    ))?;
+    io::write_line(io::status_line(
+        "Кэш",
+        Color::Cyan,
+        "Немного подождите... (это один раз происходит)",
+    ))?;
 
     let started_at = Instant::now();
-    let best = cache::load_or_compute_best();
-    println!(
-        "{}",
-        io::status_line(
-            "Готово",
-            Color::Green,
-            format!(
-                "Подготовка завершена за {}.",
-                format::format_duration(started_at.elapsed()).bold()
-            )
-        )
-    );
+    let best = cache::load_or_compute_best()?;
+    io::write_line(io::status_line(
+        "Готово",
+        Color::Green,
+        format!(
+            "Подготовка завершена за {}.",
+            format::format_duration(started_at.elapsed()).bold()
+        ),
+    ))?;
 
-    println!(
-        "{}",
-        io::status_line(
-            "Диапазон",
-            Color::Blue,
-            format!(
-                "от {} до {} баллов.",
-                "0".bold(),
-                MAX_TOTAL_SCORE.to_string().bold()
-            )
-        )
-    );
-    println!(
-        "{}",
-        io::status_line(
-            "Правило",
-            Color::Blue,
-            "Для дробного запроса используется ближайший больший целый балл.".dimmed()
-        )
-    );
+    io::write_line(io::status_line(
+        "Диапазон",
+        Color::Blue,
+        format!(
+            "от {} до {} баллов.",
+            "0".bold(),
+            MAX_TOTAL_SCORE.to_string().bold()
+        ),
+    ))?;
+    io::write_line(io::status_line(
+        "Правило",
+        Color::Blue,
+        "Для дробного запроса используется ближайший больший целый балл.".dimmed(),
+    ))?;
 
-    let target = io::read_target_score().expect("target score input unexpectedly missing");
+    let target = io::read_target_score()?;
     let requested_score = resolve_requested_score(target);
 
     match requested_score.and_then(|score| {
@@ -464,86 +477,67 @@ fn main() {
             .map(|entry| (score, entry))
     }) {
         Some((score, entry)) => {
-            println!(
+            io::write_line(format!(
                 "\n{}",
                 io::status_line(
                     "План",
                     Color::Green,
                     format!("на {} баллов (p90 сдаст)", score.to_string().bold())
                 )
-            );
+            ))?;
             if (target - score as f64).abs() > f64::EPSILON {
-                println!(
-                    "{}",
-                    io::status_line(
-                        "warning:",
-                        Color::Yellow,
-                        format!(
-                            "Запрошено {}, округлено вверх до {}.",
-                            format::format_score(target).bold(),
-                            score.to_string().bold()
-                        )
-                    )
-                );
+                io::write_line(io::status_line(
+                    "warning:",
+                    Color::Yellow,
+                    format!(
+                        "Запрошено {}, округлено вверх до {}.",
+                        format::format_score(target).bold(),
+                        score.to_string().bold()
+                    ),
+                ))?;
             }
-            println!(
-                "{}",
-                io::field_line(
-                    "Опры",
-                    Color::Cyan,
-                    io::format_count(entry.k_def, TOTAL_DEF_CARDS)
-                )
-            );
-            println!(
-                "{}",
-                io::field_line(
-                    "формул.",
-                    Color::Red,
-                    io::format_count(entry.k_red_pf, TOTAL_RED_PROOF_CARDS)
-                )
-            );
-            println!(
-                "{}",
-                io::field_line(
-                    "формул.",
-                    Color::BrightBlack,
-                    io::format_count(entry.k_black_pf, TOTAL_BLACK_PROOF_CARDS)
-                )
-            );
-            println!(
-                "{}",
-                io::field_line(
-                    "доки",
-                    Color::Red,
-                    io::format_count(entry.k_red_pp, TOTAL_RED_PROOF_CARDS)
-                )
-            );
-            println!(
-                "{}",
-                io::field_line(
-                    "доки",
-                    Color::BrightBlack,
-                    io::format_count(entry.k_black_pp, TOTAL_BLACK_PROOF_CARDS)
-                )
-            );
-            println!(
-                "{}",
-                io::field_line(
-                    "Стоимость (условно)",
-                    Color::Green,
-                    format::format_cost(entry.cost).bold()
-                )
-            );
+            io::write_line(io::field_line(
+                "Опры",
+                Color::Cyan,
+                io::format_count(entry.k_def, TOTAL_DEF_CARDS),
+            ))?;
+            io::write_line(io::field_line(
+                "формул.",
+                Color::Red,
+                io::format_count(entry.k_red_pf, TOTAL_RED_PROOF_CARDS),
+            ))?;
+            io::write_line(io::field_line(
+                "формул.",
+                Color::BrightBlack,
+                io::format_count(entry.k_black_pf, TOTAL_BLACK_PROOF_CARDS),
+            ))?;
+            io::write_line(io::field_line(
+                "доки",
+                Color::Red,
+                io::format_count(entry.k_red_pp, TOTAL_RED_PROOF_CARDS),
+            ))?;
+            io::write_line(io::field_line(
+                "доки",
+                Color::BrightBlack,
+                io::format_count(entry.k_black_pp, TOTAL_BLACK_PROOF_CARDS),
+            ))?;
+            io::write_line(io::field_line(
+                "Стоимость (условно)",
+                Color::Green,
+                format::format_cost(entry.cost).bold(),
+            ))?;
         }
-        None => println!(
+        None => io::write_line(format!(
             "\n{}",
             io::status_line(
                 "error:",
                 Color::Red,
                 format!("Максимум {}", MAX_TOTAL_SCORE.to_string().bold())
             )
-        ),
+        ))?,
     }
 
-    hooks::pause_before_exit();
+    hooks::pause_before_exit()?;
+
+    Ok(())
 }
