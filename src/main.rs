@@ -13,11 +13,6 @@ use std::time::{Duration, Instant};
 const DEFS_COSTS: [u32; 24] = [
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4,
 ];
-const FORMS_COSTS: [f64; 49] = [
-    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0,
-    2.0, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5,
-];
 const PROOFS_FORMS_COSTS: [f64; 33] = [
     1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0,
     2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0,
@@ -30,7 +25,7 @@ const PROOFS_BODY_COSTS: [u32; 33] = [
 const MAX_TOTAL_SCORE: usize = 18;
 const TARGET_SCORE_COUNT: usize = MAX_TOTAL_SCORE + 1;
 const TOTAL_DEF_CARDS: u32 = 24;
-const TOTAL_FORM_CARDS_AFTER_PROOFS: u32 = 45;
+const TOTAL_FORM_CARDS_AFTER_PROOFS: u32 = 52;
 const TOTAL_RED_PROOF_CARDS: u32 = 21;
 const TOTAL_BLACK_PROOF_CARDS: u32 = 12;
 const MAX_PROOF_FORM_CARDS: usize = (TOTAL_RED_PROOF_CARDS + TOTAL_BLACK_PROOF_CARDS) as usize;
@@ -39,7 +34,7 @@ const MAX_DRAWN_PROOF_FORMS: usize = 4;
 type Outcomes = Vec<(u8, f64)>;
 type Distribution = [f64; MAX_TOTAL_SCORE + 1];
 type DefPmfTable = Vec<Outcomes>;
-type FormPmfTable = Vec<Vec<Vec<Outcomes>>>;
+type FormPmfTable = Vec<Vec<Outcomes>>;
 
 const CACHE_VERSION: &str = "v4";
 const PROGRESS_BAR_WIDTH: usize = 10;
@@ -48,7 +43,6 @@ const PROGRESS_BAR_WIDTH: usize = 10;
 struct BestEntry {
     cost: f64,
     k_def: u8,
-    k_extra: u8,
     k_red_pf: u8,
     k_black_pf: u8,
     k_red_pp: u8,
@@ -75,7 +69,6 @@ struct ProofOutcome {
 struct ProofConfig {
     proof_cost: f64,
     total_pf: u8,
-    max_extra: u8,
     k_red_pf: u8,
     k_black_pf: u8,
     k_red_pp: u8,
@@ -160,24 +153,17 @@ fn build_def_pmf(k_def: u8) -> Outcomes {
 fn build_form_pmf_table() -> FormPmfTable {
     (0..=MAX_PROOF_FORM_CARDS)
         .map(|k_pf| {
-            (0..=FORMS_COSTS.len())
-                .map(|k_extra| {
-                    (0..=MAX_DRAWN_PROOF_FORMS)
-                        .map(|drawn_pf_known| {
-                            build_form_pmf(k_pf as u8, k_extra as u8, drawn_pf_known as u8)
-                        })
-                        .collect()
-                })
+            (0..=MAX_DRAWN_PROOF_FORMS)
+                .map(|drawn_pf_known| build_form_pmf(k_pf as u8, drawn_pf_known as u8))
                 .collect()
         })
         .collect()
 }
 
-fn build_form_pmf(k_pf: u8, k_extra: u8, drawn_pf_known: u8) -> Outcomes {
+fn build_form_pmf(k_pf: u8, drawn_pf_known: u8) -> Outcomes {
     let k_pf = k_pf as u32;
-    let k_extra = k_extra as u32;
     let drawn_pf_known = drawn_pf_known as u32;
-    let known_remaining = k_pf.saturating_sub(drawn_pf_known) + k_extra;
+    let known_remaining = k_pf.saturating_sub(drawn_pf_known);
 
     if known_remaining > TOTAL_FORM_CARDS_AFTER_PROOFS {
         return Vec::new();
@@ -206,8 +192,8 @@ fn build_form_pmf(k_pf: u8, k_extra: u8, drawn_pf_known: u8) -> Outcomes {
     outcomes
 }
 
-fn form_pmf(table: &FormPmfTable, k_pf: u8, k_extra: u8, drawn_pf_known: u8) -> &Outcomes {
-    &table[k_pf as usize][k_extra as usize][drawn_pf_known as usize]
+fn form_pmf(table: &FormPmfTable, k_pf: u8, drawn_pf_known: u8) -> &Outcomes {
+    &table[k_pf as usize][drawn_pf_known as usize]
 }
 
 fn build_proof_outcomes(
@@ -280,17 +266,11 @@ fn score_for_config(
     def_outcomes: &Outcomes,
     form_pmf_table: &FormPmfTable,
     proof_config: &ProofConfig,
-    k_extra: u8,
 ) -> usize {
     let mut distribution = [0.0; MAX_TOTAL_SCORE + 1];
 
     for outcome in &proof_config.outcomes {
-        let form_outcomes = form_pmf(
-            form_pmf_table,
-            proof_config.total_pf,
-            k_extra,
-            outcome.drawn_pf_known,
-        );
+        let form_outcomes = form_pmf(form_pmf_table, proof_config.total_pf, outcome.drawn_pf_known);
         accumulate_scores(
             &mut distribution,
             outcome.score,
@@ -360,7 +340,6 @@ fn build_proof_configs(
                     configs.push(ProofConfig {
                         proof_cost: proof_form_cost + proof_body_cost,
                         total_pf: total_pf as u8,
-                        max_extra: (FORMS_COSTS.len() - total_pf) as u8,
                         k_red_pf: k_red_pf as u8,
                         k_black_pf: k_black_pf as u8,
                         k_red_pp: k_red_pp as u8,
@@ -394,62 +373,21 @@ fn total_compute_iterations() -> u64 {
     proof_config_count()
 }
 
-fn find_min_extra_for_score(
-    def_outcomes: &Outcomes,
-    form_pmf_table: &FormPmfTable,
-    proof_config: &ProofConfig,
-    target_score: usize,
-    mut left: u8,
-    right: u8,
-) -> Option<u8> {
-    if score_for_config(def_outcomes, form_pmf_table, proof_config, right) < target_score {
-        return None;
-    }
-
-    let mut right = right;
-    while left < right {
-        let mid = left + (right - left) / 2;
-        if score_for_config(def_outcomes, form_pmf_table, proof_config, mid) >= target_score {
-            right = mid;
-        } else {
-            left = mid + 1;
-        }
-    }
-
-    Some(left)
-}
-
 fn update_best_for_config(
     best: &mut BestTable,
     def_cost: f64,
     def_outcomes: &Outcomes,
     form_pmf_table: &FormPmfTable,
-    form_cost_prefix: &[f64],
     k_def: u8,
     proof_config: &ProofConfig,
 ) {
-    let max_extra = proof_config.max_extra;
-    let max_score = score_for_config(def_outcomes, form_pmf_table, proof_config, max_extra);
-    let mut min_extra = 0u8;
+    let max_score = score_for_config(def_outcomes, form_pmf_table, proof_config);
+    let total_cost = def_cost + proof_config.proof_cost;
 
     for target_score in 0..=max_score {
-        let Some(k_extra) = find_min_extra_for_score(
-            def_outcomes,
-            form_pmf_table,
-            proof_config,
-            target_score,
-            min_extra,
-            max_extra,
-        ) else {
-            break;
-        };
-
-        min_extra = k_extra;
-        let total_cost = def_cost + proof_config.proof_cost + form_cost_prefix[k_extra as usize];
         let candidate = BestEntry {
             cost: total_cost,
             k_def,
-            k_extra,
             k_red_pf: proof_config.k_red_pf,
             k_black_pf: proof_config.k_black_pf,
             k_red_pp: proof_config.k_red_pp,
@@ -525,7 +463,6 @@ fn compute_best(progress: &ProgressTracker) -> BestTable {
     let def_pmf_table = build_def_pmf_table();
     let form_pmf_table = build_form_pmf_table();
     let def_cost_prefix = prefix_sums_u32(&DEFS_COSTS);
-    let form_cost_prefix = prefix_sums_f64(&FORMS_COSTS);
     let proof_form_cost_prefix = prefix_sums_f64(&PROOFS_FORMS_COSTS);
     let proof_body_cost_prefix = prefix_sums_u32(&PROOFS_BODY_COSTS);
     let proof_configs = build_proof_configs(&proof_form_cost_prefix, &proof_body_cost_prefix);
@@ -541,7 +478,6 @@ fn compute_best(progress: &ProgressTracker) -> BestTable {
                     def_cost_prefix[k_def],
                     &def_pmf_table[k_def],
                     &form_pmf_table,
-                    &form_cost_prefix,
                     k_def as u8,
                     proof_config,
                 );
@@ -731,7 +667,7 @@ fn main() {
             println!(
                 "{}",
                 field_line(
-                    "формулировки",
+                    "формул.",
                     Color::Red,
                     format!("{} шт", entry.k_red_pf.to_string().bold())
                 )
@@ -739,17 +675,9 @@ fn main() {
             println!(
                 "{}",
                 field_line(
-                    "формулировки",
+                    "формул.",
                     Color::BrightBlack,
                     format!("{} шт", entry.k_black_pf.to_string().bold())
-                )
-            );
-            println!(
-                "{}",
-                field_line(
-                    "Доп? формулировки",
-                    Color::Blue,
-                    format!("{} шт", entry.k_extra.to_string().bold())
                 )
             );
             println!(
