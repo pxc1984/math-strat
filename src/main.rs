@@ -11,23 +11,41 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const DEFS_COSTS: [u32; 24] = [
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 3,
 ];
-const PROOFS_FORMS_COSTS: [f64; 33] = [
-    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0,
-    2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0,
+const RED_PROOFS_FORMS_COSTS: [f64; 21] = [
+    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+    1.0, 1.0,
 ];
-const PROOFS_BODY_COSTS: [u32; 33] = [
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-    7,
+const BLACK_PROOFS_FORMS_COSTS: [f64; 12] = [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0];
+const RED_PROOFS_BODY_COSTS: [u32; 21] = [
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
 ];
+const BLACK_PROOFS_BODY_COSTS: [u32; 12] = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3];
 
-const MAX_TOTAL_SCORE: usize = 18;
+const TOTAL_DEF_QUESTIONS: u32 = 3;
+const TOTAL_FORM_QUESTIONS: u32 = 2;
+const TOTAL_RED_PROOF_QUESTIONS: u32 = 3;
+const TOTAL_BLACK_PROOF_QUESTIONS: u32 = 1;
+
+const DEFINITION_QUESTION_SCORE: usize = 1;
+const FORMULATION_QUESTION_SCORE: usize = 1;
+const RED_PROOF_FORMULATION_SCORE: usize = 1;
+const RED_PROOF_BODY_SCORE: usize = 2;
+const BLACK_PROOF_FORMULATION_SCORE: usize = 1;
+const BLACK_PROOF_BODY_SCORE: usize = 3;
+
+const MAX_TOTAL_SCORE: usize = TOTAL_DEF_QUESTIONS as usize * DEFINITION_QUESTION_SCORE
+    + TOTAL_FORM_QUESTIONS as usize * FORMULATION_QUESTION_SCORE
+    + TOTAL_RED_PROOF_QUESTIONS as usize * (RED_PROOF_FORMULATION_SCORE + RED_PROOF_BODY_SCORE)
+    + TOTAL_BLACK_PROOF_QUESTIONS as usize * (BLACK_PROOF_FORMULATION_SCORE + BLACK_PROOF_BODY_SCORE);
 const TARGET_SCORE_COUNT: usize = MAX_TOTAL_SCORE + 1;
 const TOTAL_DEF_CARDS: u32 = 24;
-const TOTAL_FORM_CARDS_AFTER_PROOFS: u32 = 52;
+const TOTAL_FORM_CARDS: u32 = 56;
 const TOTAL_RED_PROOF_CARDS: u32 = 21;
 const TOTAL_BLACK_PROOF_CARDS: u32 = 12;
+const TOTAL_PROOF_QUESTIONS: u32 = TOTAL_RED_PROOF_QUESTIONS + TOTAL_BLACK_PROOF_QUESTIONS;
+const TOTAL_FORM_CARDS_AFTER_PROOFS: u32 = TOTAL_FORM_CARDS - TOTAL_PROOF_QUESTIONS;
 const MAX_PROOF_FORM_CARDS: usize = (TOTAL_RED_PROOF_CARDS + TOTAL_BLACK_PROOF_CARDS) as usize;
 const MAX_DRAWN_PROOF_FORMS: usize = 4;
 
@@ -36,7 +54,7 @@ type Distribution = [f64; MAX_TOTAL_SCORE + 1];
 type DefPmfTable = Vec<Outcomes>;
 type FormPmfTable = Vec<Vec<Outcomes>>;
 
-const CACHE_VERSION: &str = "v4";
+const CACHE_VERSION: &str = "v6";
 const PROGRESS_BAR_WIDTH: usize = 10;
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
@@ -137,15 +155,15 @@ fn build_def_pmf_table() -> DefPmfTable {
 
 fn build_def_pmf(k_def: u8) -> Outcomes {
     let k_def = k_def as u32;
-    let total = comb(TOTAL_DEF_CARDS, 3);
-    let mut outcomes = Vec::with_capacity(4);
+    let total = comb(TOTAL_DEF_CARDS, TOTAL_DEF_QUESTIONS);
+    let mut outcomes = Vec::with_capacity(TOTAL_DEF_QUESTIONS as usize + 1);
 
-    for x in 0..=3 {
-        if k_def < x || TOTAL_DEF_CARDS - k_def < 3 - x {
+    for x in 0..=TOTAL_DEF_QUESTIONS {
+        if k_def < x || TOTAL_DEF_CARDS - k_def < TOTAL_DEF_QUESTIONS - x {
             continue;
         }
 
-        let prob = comb(k_def, x) * comb(TOTAL_DEF_CARDS - k_def, 3 - x) / total;
+        let prob = comb(k_def, x) * comb(TOTAL_DEF_CARDS - k_def, TOTAL_DEF_QUESTIONS - x) / total;
         if prob > 0.0 {
             outcomes.push((x as u8, prob));
         }
@@ -177,16 +195,16 @@ fn build_form_pmf(k_pf: u8, drawn_pf_known: u8) -> Outcomes {
         return vec![(0, 1.0)];
     }
 
-    let total_ways = comb(TOTAL_FORM_CARDS_AFTER_PROOFS, 2);
-    let mut outcomes = Vec::with_capacity(3);
+    let total_ways = comb(TOTAL_FORM_CARDS_AFTER_PROOFS, TOTAL_FORM_QUESTIONS);
+    let mut outcomes = Vec::with_capacity(TOTAL_FORM_QUESTIONS as usize + 1);
 
-    for x in 0..=2 {
-        if known_remaining < x || TOTAL_FORM_CARDS_AFTER_PROOFS - known_remaining < 2 - x {
+    for x in 0..=TOTAL_FORM_QUESTIONS {
+        if known_remaining < x || TOTAL_FORM_CARDS_AFTER_PROOFS - known_remaining < TOTAL_FORM_QUESTIONS - x {
             continue;
         }
 
         let prob = comb(known_remaining, x)
-            * comb(TOTAL_FORM_CARDS_AFTER_PROOFS - known_remaining, 2 - x)
+            * comb(TOTAL_FORM_CARDS_AFTER_PROOFS - known_remaining, TOTAL_FORM_QUESTIONS - x)
             / total_ways;
         if prob > 0.0 {
             outcomes.push((x as u8, prob));
@@ -206,18 +224,18 @@ fn build_proof_outcomes(
     k_red_pp: u8,
     k_black_pp: u8,
 ) -> Vec<ProofOutcome> {
-    let total_red_proof_ways = comb(TOTAL_RED_PROOF_CARDS, 3);
+    let total_red_proof_ways = comb(TOTAL_RED_PROOF_CARDS, TOTAL_RED_PROOF_QUESTIONS);
     let black_total = TOTAL_BLACK_PROOF_CARDS as f64;
     let mut outcomes = Vec::with_capacity(16);
 
-    for red_full in 0..=3u32 {
+    for red_full in 0..=TOTAL_RED_PROOF_QUESTIONS {
         if red_full > k_red_pp as u32 {
             break;
         }
 
-        let max_red_form_only = (3 - red_full).min((k_red_pf - k_red_pp) as u32);
+        let max_red_form_only = (TOTAL_RED_PROOF_QUESTIONS - red_full).min((k_red_pf - k_red_pp) as u32);
         for red_form_only in 0..=max_red_form_only {
-            let red_unknown = 3 - red_full - red_form_only;
+            let red_unknown = TOTAL_RED_PROOF_QUESTIONS - red_full - red_form_only;
             if red_unknown > TOTAL_RED_PROOF_CARDS - k_red_pf as u32 {
                 continue;
             }
@@ -230,12 +248,14 @@ fn build_proof_outcomes(
                 continue;
             }
 
-            let red_score = (3 * red_full + red_form_only) as usize;
+            let red_score = red_full as usize
+                * (RED_PROOF_FORMULATION_SCORE + RED_PROOF_BODY_SCORE)
+                + red_form_only as usize * RED_PROOF_FORMULATION_SCORE;
 
             if k_black_pp > 0 {
                 let black_prob = k_black_pp as f64 / black_total;
                 outcomes.push(ProofOutcome {
-                    score: red_score + 4,
+                    score: red_score + BLACK_PROOF_FORMULATION_SCORE + BLACK_PROOF_BODY_SCORE,
                     prob: red_prob * black_prob,
                     drawn_pf_known: (red_full + red_form_only + 1) as u8,
                 });
@@ -245,7 +265,7 @@ fn build_proof_outcomes(
             if black_form_only_count > 0 {
                 let black_prob = black_form_only_count as f64 / black_total;
                 outcomes.push(ProofOutcome {
-                    score: red_score + 1,
+                    score: red_score + BLACK_PROOF_FORMULATION_SCORE,
                     prob: red_prob * black_prob,
                     drawn_pf_known: (red_full + red_form_only + 1) as u8,
                 });
@@ -328,19 +348,20 @@ fn check_score(distribution: &Distribution) -> usize {
 }
 
 fn build_proof_configs(
-    proof_form_cost_prefix: &[f64],
-    proof_body_cost_prefix: &[f64],
+    red_proof_form_cost_prefix: &[f64],
+    black_proof_form_cost_prefix: &[f64],
+    red_proof_body_cost_prefix: &[f64],
+    black_proof_body_cost_prefix: &[f64],
 ) -> Vec<ProofConfig> {
     let mut configs = Vec::new();
 
     for k_red_pf in 0..=TOTAL_RED_PROOF_CARDS as usize {
         for k_black_pf in 0..=TOTAL_BLACK_PROOF_CARDS as usize {
             let total_pf = k_red_pf + k_black_pf;
-            let proof_form_cost = proof_form_cost_prefix[total_pf];
+            let proof_form_cost = red_proof_form_cost_prefix[k_red_pf] + black_proof_form_cost_prefix[k_black_pf];
             for k_red_pp in 0..=k_red_pf {
                 for k_black_pp in 0..=k_black_pf {
-                    let total_pp = k_red_pp + k_black_pp;
-                    let proof_body_cost = proof_body_cost_prefix[total_pp];
+                    let proof_body_cost = red_proof_body_cost_prefix[k_red_pp] + black_proof_body_cost_prefix[k_black_pp];
                     configs.push(ProofConfig {
                         proof_cost: proof_form_cost + proof_body_cost,
                         total_pf: total_pf as u8,
@@ -467,9 +488,16 @@ fn compute_best(progress: &ProgressTracker) -> BestTable {
     let def_pmf_table = build_def_pmf_table();
     let form_pmf_table = build_form_pmf_table();
     let def_cost_prefix = prefix_sums_u32(&DEFS_COSTS);
-    let proof_form_cost_prefix = prefix_sums_f64(&PROOFS_FORMS_COSTS);
-    let proof_body_cost_prefix = prefix_sums_u32(&PROOFS_BODY_COSTS);
-    let proof_configs = build_proof_configs(&proof_form_cost_prefix, &proof_body_cost_prefix);
+    let red_proof_form_cost_prefix = prefix_sums_f64(&RED_PROOFS_FORMS_COSTS);
+    let black_proof_form_cost_prefix = prefix_sums_f64(&BLACK_PROOFS_FORMS_COSTS);
+    let red_proof_body_cost_prefix = prefix_sums_u32(&RED_PROOFS_BODY_COSTS);
+    let black_proof_body_cost_prefix = prefix_sums_u32(&BLACK_PROOFS_BODY_COSTS);
+    let proof_configs = build_proof_configs(
+        &red_proof_form_cost_prefix,
+        &black_proof_form_cost_prefix,
+        &red_proof_body_cost_prefix,
+        &black_proof_body_cost_prefix,
+    );
 
     proof_configs
         .par_iter()
@@ -605,7 +633,7 @@ fn pause_before_exit() {
 fn main() {
     println!("{}", status_line("Запуск", Color::Magenta, "Стратегия на красный матан"));
     println!("{}", status_line("Кэш", Color::Cyan, "Происходит прогрев кэша (гоев)"));
-    println!("{}", status_line("note:", Color::Blue, "Немного подождите... (это один раз происходит)"));
+    println!("{}", status_line("Кэш", Color::Cyan, "Немного подождите... (это один раз происходит)"));
 
     let started_at = Instant::now();
     let best = load_or_compute_best();
