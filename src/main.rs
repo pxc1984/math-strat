@@ -405,6 +405,10 @@ fn resolve_requested_score(target: f64) -> Option<usize> {
     Some(target.ceil() as usize)
 }
 
+fn max_available_score(best: &BestTable) -> usize {
+    best.iter().rposition(Option::is_some).unwrap_or(0)
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -438,6 +442,7 @@ fn run() -> Result<(), AppError> {
 
     let started_at = Instant::now();
     let best = cache::load_or_compute_best()?;
+    let supported_max_score = max_available_score(&best);
     io::write_line(io::status_line(
         "Готово",
         Color::Green,
@@ -451,9 +456,9 @@ fn run() -> Result<(), AppError> {
         "Диапазон",
         Color::Blue,
         format!(
-            "от {} до {} баллов.",
+            "от {} до {} баллов для p90.",
             "0".bold(),
-            MAX_TOTAL_SCORE.to_string().bold()
+            supported_max_score.to_string().bold()
         ),
     ))?;
 
@@ -522,7 +527,10 @@ fn run() -> Result<(), AppError> {
             io::status_line(
                 "error:",
                 Color::Red,
-                format!("Максимум {}", MAX_TOTAL_SCORE.to_string().bold())
+                format!(
+                    "Максимум для p90: {}",
+                    supported_max_score.to_string().bold()
+                )
             )
         ))?,
     }
