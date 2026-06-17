@@ -435,11 +435,6 @@ fn run() -> Result<(), AppError> {
         Color::Cyan,
         "Происходит прогрев кэша (гоев)",
     ))?;
-    io::write_line(io::status_line(
-        "Кэш",
-        Color::Cyan,
-        "Немного подождите... (это один раз происходит)",
-    ))?;
 
     let started_at = Instant::now();
     let best = cache::load_or_compute_best()?;
@@ -460,11 +455,6 @@ fn run() -> Result<(), AppError> {
             "0".bold(),
             MAX_TOTAL_SCORE.to_string().bold()
         ),
-    ))?;
-    io::write_line(io::status_line(
-        "Правило",
-        Color::Blue,
-        "Для дробного запроса используется ближайший больший целый балл.".dimmed(),
     ))?;
 
     let target = io::read_target_score()?;
