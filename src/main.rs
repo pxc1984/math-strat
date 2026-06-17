@@ -5,19 +5,27 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::thread;
 use std::time::{Duration, Instant};
 
-const DEFS_COSTS: [u32; 24] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4];
+const DEFS_COSTS: [u32; 24] = [
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4,
+];
 const FORMS_COSTS: [f64; 49] = [
-    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0,
-    2.0, 2.0, 2.0, 2.0, 2.0, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5,
+    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0,
+    2.0, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5, 3.5,
 ];
 const PROOFS_FORMS_COSTS: [f64; 33] = [
-    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0,
-    2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0,
+    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0,
+    2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0,
 ];
-const PROOFS_BODY_COSTS: [u32; 33] = [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7];
+const PROOFS_BODY_COSTS: [u32; 33] = [
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    7,
+];
 
 const MAX_TOTAL_SCORE: usize = 18;
 const TOTAL_DEF_CARDS: u32 = 24;
@@ -29,6 +37,7 @@ type Outcomes = Vec<(u8, f64)>;
 type Distribution = [f64; MAX_TOTAL_SCORE + 1];
 
 const CACHE_VERSION: &str = "v2";
+const PROGRESS_BAR_WIDTH: usize = 10;
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
 struct BestEntry {
@@ -42,6 +51,13 @@ struct BestEntry {
 }
 
 type BestTable = Vec<Option<BestEntry>>;
+
+struct ProgressTracker {
+    total: u64,
+    completed: AtomicU64,
+    finished: AtomicBool,
+    started_at: Instant,
+}
 
 fn comb(n: u32, k: u32) -> f64 {
     if k > n {
@@ -174,11 +190,7 @@ fn ticket_pmf(
             if k_black_pp > 0 {
                 let black_prob = k_black_pp as f64 / black_total;
                 let drawn_pf_known = (red_full + red_form_only + 1) as u8;
-                let form_outcomes = form_pmf(
-                    k_red_pf + k_black_pf,
-                    k_extra,
-                    drawn_pf_known,
-                );
+                let form_outcomes = form_pmf(k_red_pf + k_black_pf, k_extra, drawn_pf_known);
                 accumulate_scores(
                     &mut distribution,
                     red_score + 4,
@@ -192,11 +204,7 @@ fn ticket_pmf(
             if black_form_only_count > 0 {
                 let black_prob = black_form_only_count as f64 / black_total;
                 let drawn_pf_known = (red_full + red_form_only + 1) as u8;
-                let form_outcomes = form_pmf(
-                    k_red_pf + k_black_pf,
-                    k_extra,
-                    drawn_pf_known,
-                );
+                let form_outcomes = form_pmf(k_red_pf + k_black_pf, k_extra, drawn_pf_known);
                 accumulate_scores(
                     &mut distribution,
                     red_score + 1,
@@ -210,11 +218,7 @@ fn ticket_pmf(
             if black_unknown_count > 0 {
                 let black_prob = black_unknown_count as f64 / black_total;
                 let drawn_pf_known = (red_full + red_form_only) as u8;
-                let form_outcomes = form_pmf(
-                    k_red_pf + k_black_pf,
-                    k_extra,
-                    drawn_pf_known,
-                );
+                let form_outcomes = form_pmf(k_red_pf + k_black_pf, k_extra, drawn_pf_known);
                 accumulate_scores(
                     &mut distribution,
                     red_score,
@@ -269,7 +273,69 @@ fn check_score(distribution: &Distribution) -> usize {
     0
 }
 
-fn compute_best() -> BestTable {
+fn total_compute_iterations() -> u64 {
+    let per_k_def = (0..=TOTAL_RED_PROOF_CARDS as usize)
+        .map(|k_red_pf| {
+            (0..=TOTAL_BLACK_PROOF_CARDS as usize)
+                .map(|k_black_pf| {
+                    let total_pf = k_red_pf + k_black_pf;
+                    ((k_red_pf + 1) * (k_black_pf + 1) * (FORMS_COSTS.len() - total_pf + 1)) as u64
+                })
+                .sum::<u64>()
+        })
+        .sum::<u64>();
+
+    (DEFS_COSTS.len() as u64 + 1) * per_k_def
+}
+
+fn render_progress_line(progress: &ProgressTracker) -> String {
+    let completed = progress
+        .completed
+        .load(Ordering::Relaxed)
+        .min(progress.total);
+    let ratio = if progress.total == 0 {
+        1.0
+    } else {
+        completed as f64 / progress.total as f64
+    };
+    let filled = (ratio * PROGRESS_BAR_WIDTH as f64).round() as usize;
+    let elapsed_secs = progress.started_at.elapsed().as_secs_f64().max(0.001);
+    let speed = completed as f64 / elapsed_secs;
+    let remaining = progress.total.saturating_sub(completed);
+    let eta = if completed == 0 {
+        "--".to_string()
+    } else {
+        format_duration(Duration::from_secs_f64(remaining as f64 / speed.max(0.001)))
+    };
+
+    format!(
+        "\rПрогресс: [{bar:<width$}] {percent:>5.1}% | {completed}/{total} | {speed:>8.0} ит/с | осталось {eta}",
+        bar = "#".repeat(filled.min(PROGRESS_BAR_WIDTH)),
+        width = PROGRESS_BAR_WIDTH,
+        percent = ratio * 100.0,
+        total = progress.total,
+        speed = speed,
+        eta = eta,
+    )
+}
+
+fn start_progress_reporter(progress: Arc<ProgressTracker>) -> thread::JoinHandle<()> {
+    print!("{}", render_progress_line(&progress));
+    let _ = io::stdout().flush();
+
+    thread::spawn(move || {
+        while !progress.finished.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_millis(100));
+            print!("{}", render_progress_line(&progress));
+            let _ = io::stdout().flush();
+        }
+
+        print!("{}", render_progress_line(&progress));
+        println!();
+    })
+}
+
+fn compute_best(progress: &ProgressTracker) -> BestTable {
     let def_cost_prefix = prefix_sums_u32(&DEFS_COSTS);
     let form_cost_prefix = prefix_sums_f64(&FORMS_COSTS);
     let proof_form_cost_prefix = prefix_sums_f64(&PROOFS_FORMS_COSTS);
@@ -319,6 +385,8 @@ fn compute_best() -> BestTable {
                                         })
                                     }
                                 }
+
+                                progress.completed.fetch_add(1, Ordering::Relaxed);
                             }
                         }
                     }
@@ -343,7 +411,9 @@ fn compute_best() -> BestTable {
 }
 
 fn cache_file_path() -> PathBuf {
-    env::temp_dir().join("math-strat").join(format!("best-{CACHE_VERSION}.json"))
+    env::temp_dir()
+        .join("math-strat")
+        .join(format!("best-{CACHE_VERSION}.json"))
 }
 
 fn load_best_from_cache(path: &PathBuf) -> Option<BestTable> {
@@ -372,7 +442,17 @@ fn load_or_compute_best() -> BestTable {
         return best;
     }
 
-    let best = compute_best();
+    let progress = Arc::new(ProgressTracker {
+        total: total_compute_iterations(),
+        completed: AtomicU64::new(0),
+        finished: AtomicBool::new(false),
+        started_at: Instant::now(),
+    });
+    let reporter = start_progress_reporter(progress.clone());
+    let best = compute_best(progress.as_ref());
+    progress.completed.store(progress.total, Ordering::Relaxed);
+    progress.finished.store(true, Ordering::Relaxed);
+    let _ = reporter.join();
     save_best_to_cache(&cache_path, &best);
     best
 }
@@ -426,7 +506,10 @@ fn main() {
 
     let started_at = Instant::now();
     let best = load_or_compute_best();
-    println!("Подготовка завершена за {}.", format_duration(started_at.elapsed()));
+    println!(
+        "Подготовка завершена за {}.",
+        format_duration(started_at.elapsed())
+    );
 
     println!("Доступный диапазон: от 0 до {MAX_TOTAL_SCORE} баллов.");
     println!("Для дробного запроса используется ближайший больший целый балл.");
@@ -434,11 +517,20 @@ fn main() {
     let target = read_target_score().expect("target score input unexpectedly missing");
     let requested_score = resolve_requested_score(target);
 
-    match requested_score.and_then(|score| best.get(score).copied().flatten().map(|entry| (score, entry))) {
+    match requested_score.and_then(|score| {
+        best.get(score)
+            .copied()
+            .flatten()
+            .map(|entry| (score, entry))
+    }) {
         Some((score, entry)) => {
             println!("\nПлан на {} баллов (90%):", score);
             if (target - score as f64).abs() > f64::EPSILON {
-                println!("Запрошено: {}, округлено вверх до {}.", format_score(target), score);
+                println!(
+                    "Запрошено: {}, округлено вверх до {}.",
+                    format_score(target),
+                    score
+                );
             }
             println!("Опры: {} шт", entry.k_def);
             println!("Формулировки к красным докам: {} шт", entry.k_red_pf);
