@@ -88,6 +88,10 @@ fn field_line(text: &str, color: Color, value: impl std::fmt::Display) -> String
     format!("{:>12} {}", label(text, color), value)
 }
 
+fn format_count(chosen: u8, total: u32) -> String {
+    format!("{}/{} шт", chosen.to_string().bold(), total)
+}
+
 fn comb(n: u32, k: u32) -> f64 {
     if k > n {
         return 0.0;
@@ -663,13 +667,13 @@ fn main() {
                     )
                 );
             }
-            println!("{}", field_line("Опры", Color::Cyan, format!("{} шт", entry.k_def.to_string().bold())));
+            println!("{}", field_line("Опры", Color::Cyan, format_count(entry.k_def, TOTAL_DEF_CARDS)));
             println!(
                 "{}",
                 field_line(
                     "формул.",
                     Color::Red,
-                    format!("{} шт", entry.k_red_pf.to_string().bold())
+                    format_count(entry.k_red_pf, TOTAL_RED_PROOF_CARDS)
                 )
             );
             println!(
@@ -677,7 +681,7 @@ fn main() {
                 field_line(
                     "формул.",
                     Color::BrightBlack,
-                    format!("{} шт", entry.k_black_pf.to_string().bold())
+                    format_count(entry.k_black_pf, TOTAL_BLACK_PROOF_CARDS)
                 )
             );
             println!(
@@ -685,7 +689,7 @@ fn main() {
                 field_line(
                     "доки",
                     Color::Red,
-                    format!("{} шт", entry.k_red_pp.to_string().bold())
+                    format_count(entry.k_red_pp, TOTAL_RED_PROOF_CARDS)
                 )
             );
             println!(
@@ -693,7 +697,7 @@ fn main() {
                 field_line(
                     "доки",
                     Color::BrightBlack,
-                    format!("{} шт", entry.k_black_pp.to_string().bold())
+                    format_count(entry.k_black_pp, TOTAL_BLACK_PROOF_CARDS)
                 )
             );
             println!("{}", field_line("Стоимость (условно)", Color::Green, format_cost(entry.cost).bold()));
