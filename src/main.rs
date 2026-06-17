@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const DEFS_COSTS: [u32; 24] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4];
 const FORMS_COSTS: [f64; 49] = [
@@ -362,7 +362,7 @@ fn main() {
 
     let started_at = Instant::now();
     let best = load_or_compute_best();
-    println!("Подготовка завершена за {:.2} сек.", started_at.elapsed().as_secs_f64());
+    println!("Подготовка завершена за {}.", format_duration(started_at.elapsed()));
 
     println!("Доступный диапазон: от 0 до {MAX_TOTAL_SCORE} баллов.");
     println!("Для дробного запроса используется ближайший больший целый балл.");
@@ -401,5 +401,28 @@ fn format_score(score: f64) -> String {
         format!("{:.0}", score)
     } else {
         format!("{:.1}", score)
+    }
+}
+
+fn format_duration(duration: Duration) -> String {
+    let total_ms = duration.as_millis();
+
+    if total_ms < 1_000 {
+        return format!("{} мс", total_ms);
+    }
+
+    let total_secs = duration.as_secs();
+    if total_secs < 60 {
+        return format!("{:.1} сек", duration.as_secs_f64());
+    }
+
+    let hours = total_secs / 3_600;
+    let minutes = (total_secs % 3_600) / 60;
+    let seconds = total_secs % 60;
+
+    if hours > 0 {
+        format!("{} ч {:02} мин {:02} сек", hours, minutes, seconds)
+    } else {
+        format!("{} мин {:02} сек", minutes, seconds)
     }
 }
