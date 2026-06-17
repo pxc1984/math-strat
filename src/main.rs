@@ -21,20 +21,23 @@ const PROOFS_BODY_COSTS: [u32; 33] = [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 4, 4, 4, 
 const MAX_TOTAL_SCORE: usize = 18;
 const TOTAL_DEF_CARDS: u32 = 24;
 const TOTAL_FORM_CARDS_AFTER_PROOFS: u32 = 45;
-const TOTAL_PROOF_CARDS: u32 = 33;
+const TOTAL_RED_PROOF_CARDS: u32 = 21;
+const TOTAL_BLACK_PROOF_CARDS: u32 = 12;
 
 type Outcomes = Vec<(u8, f64)>;
 type Distribution = [f64; MAX_TOTAL_SCORE + 1];
 
-const CACHE_VERSION: &str = "v1";
+const CACHE_VERSION: &str = "v2";
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
 struct BestEntry {
     cost: f64,
     k_def: u8,
     k_extra: u8,
-    k_pf: u8,
-    k_pp: u8,
+    k_red_pf: u8,
+    k_black_pf: u8,
+    k_red_pp: u8,
+    k_black_pp: u8,
 }
 
 type BestTable = Vec<Option<BestEntry>>;
@@ -132,61 +135,89 @@ fn form_pmf(k_pf: u8, k_extra: u8, drawn_pf_known: u8) -> Outcomes {
     outcomes
 }
 
-fn ticket_pmf(k_def: u8, k_pf: u8, k_pp: u8, k_extra: u8) -> Distribution {
+fn ticket_pmf(
+    k_def: u8,
+    k_red_pf: u8,
+    k_black_pf: u8,
+    k_red_pp: u8,
+    k_black_pp: u8,
+    k_extra: u8,
+) -> Distribution {
     let def_outcomes = def_pmf(k_def);
-    let total_proof_ways = comb(TOTAL_PROOF_CARDS, 4);
+    let total_red_proof_ways = comb(TOTAL_RED_PROOF_CARDS, 3);
+    let black_total = TOTAL_BLACK_PROOF_CARDS as f64;
     let mut distribution = [0.0; MAX_TOTAL_SCORE + 1];
 
-    for a in 0..=4u32 {
-        if a > k_pp as u32 {
+    for red_full in 0..=3u32 {
+        if red_full > k_red_pp as u32 {
             break;
         }
 
-        let max_b = (4 - a).min((k_pf - k_pp) as u32);
-        for b in 0..=max_b {
-            let c = 4 - a - b;
-            if c > TOTAL_PROOF_CARDS - k_pf as u32 {
+        let max_red_form_only = (3 - red_full).min((k_red_pf - k_red_pp) as u32);
+        for red_form_only in 0..=max_red_form_only {
+            let red_unknown = 3 - red_full - red_form_only;
+            if red_unknown > TOTAL_RED_PROOF_CARDS - k_red_pf as u32 {
                 continue;
             }
 
-            let proof_prob = comb(k_pp as u32, a)
-                * comb((k_pf - k_pp) as u32, b)
-                * comb(TOTAL_PROOF_CARDS - k_pf as u32, c)
-                / total_proof_ways;
-            if proof_prob == 0.0 {
+            let red_prob = comb(k_red_pp as u32, red_full)
+                * comb((k_red_pf - k_red_pp) as u32, red_form_only)
+                * comb(TOTAL_RED_PROOF_CARDS - k_red_pf as u32, red_unknown)
+                / total_red_proof_ways;
+            if red_prob == 0.0 {
                 continue;
             }
 
-            let drawn_pf_known = (a + b) as u8;
-            let form_outcomes = form_pmf(k_pf, k_extra, drawn_pf_known);
+            let red_score = (3 * red_full + red_form_only) as usize;
 
-            if a > 0 {
-                let with_body_score = (3 * a + b + 1) as usize;
-                let without_body_score = (3 * a + b) as usize;
-                let with_body_prob = proof_prob * (a as f64 / 4.0);
-                let without_body_prob = proof_prob - with_body_prob;
-
+            if k_black_pp > 0 {
+                let black_prob = k_black_pp as f64 / black_total;
+                let drawn_pf_known = (red_full + red_form_only + 1) as u8;
+                let form_outcomes = form_pmf(
+                    k_red_pf + k_black_pf,
+                    k_extra,
+                    drawn_pf_known,
+                );
                 accumulate_scores(
                     &mut distribution,
-                    with_body_score,
-                    with_body_prob,
+                    red_score + 4,
+                    red_prob * black_prob,
                     &form_outcomes,
                     &def_outcomes,
                 );
-                if without_body_prob > 0.0 {
-                    accumulate_scores(
-                        &mut distribution,
-                        without_body_score,
-                        without_body_prob,
-                        &form_outcomes,
-                        &def_outcomes,
-                    );
-                }
-            } else {
+            }
+
+            let black_form_only_count = k_black_pf.saturating_sub(k_black_pp);
+            if black_form_only_count > 0 {
+                let black_prob = black_form_only_count as f64 / black_total;
+                let drawn_pf_known = (red_full + red_form_only + 1) as u8;
+                let form_outcomes = form_pmf(
+                    k_red_pf + k_black_pf,
+                    k_extra,
+                    drawn_pf_known,
+                );
                 accumulate_scores(
                     &mut distribution,
-                    b as usize,
-                    proof_prob,
+                    red_score + 1,
+                    red_prob * black_prob,
+                    &form_outcomes,
+                    &def_outcomes,
+                );
+            }
+
+            let black_unknown_count = TOTAL_BLACK_PROOF_CARDS as i32 - k_black_pf as i32;
+            if black_unknown_count > 0 {
+                let black_prob = black_unknown_count as f64 / black_total;
+                let drawn_pf_known = (red_full + red_form_only) as u8;
+                let form_outcomes = form_pmf(
+                    k_red_pf + k_black_pf,
+                    k_extra,
+                    drawn_pf_known,
+                );
+                accumulate_scores(
+                    &mut distribution,
+                    red_score,
+                    red_prob * black_prob,
                     &form_outcomes,
                     &def_outcomes,
                 );
@@ -247,15 +278,26 @@ fn compute_best() -> BestTable {
 
     for k_def in 0..=DEFS_COSTS.len() {
         let def_cost = def_cost_prefix[k_def];
-        for k_pf in 0..=PROOFS_FORMS_COSTS.len() {
-            let proof_form_cost = proof_form_cost_prefix[k_pf];
-            for k_pp in 0..=k_pf {
-                let proof_body_cost = proof_body_cost_prefix[k_pp];
-                for k_extra in 0..=(FORMS_COSTS.len() - k_pf) {
+        for k_red_pf in 0..=TOTAL_RED_PROOF_CARDS as usize {
+            for k_black_pf in 0..=TOTAL_BLACK_PROOF_CARDS as usize {
+                let total_pf = k_red_pf + k_black_pf;
+                let proof_form_cost = proof_form_cost_prefix[total_pf];
+                for k_red_pp in 0..=k_red_pf {
+                    for k_black_pp in 0..=k_black_pf {
+                        let total_pp = k_red_pp + k_black_pp;
+                        let proof_body_cost = proof_body_cost_prefix[total_pp];
+                        for k_extra in 0..=(FORMS_COSTS.len() - total_pf) {
                     let total_cost =
                         def_cost + proof_form_cost + proof_body_cost + form_cost_prefix[k_extra];
 
-                    let distribution = ticket_pmf(k_def as u8, k_pf as u8, k_pp as u8, k_extra as u8);
+                            let distribution = ticket_pmf(
+                                k_def as u8,
+                                k_red_pf as u8,
+                                k_black_pf as u8,
+                                k_red_pp as u8,
+                                k_black_pp as u8,
+                                k_extra as u8,
+                            );
                     let score = check_score(&distribution);
 
                     match best[score] {
@@ -265,9 +307,13 @@ fn compute_best() -> BestTable {
                                 cost: total_cost,
                                 k_def: k_def as u8,
                                 k_extra: k_extra as u8,
-                                k_pf: k_pf as u8,
-                                k_pp: k_pp as u8,
+                                k_red_pf: k_red_pf as u8,
+                                k_black_pf: k_black_pf as u8,
+                                k_red_pp: k_red_pp as u8,
+                                k_black_pp: k_black_pp as u8,
                             })
+                        }
+                    }
                         }
                     }
                 }
@@ -315,7 +361,7 @@ fn load_or_compute_best() -> BestTable {
 
 fn read_target_score() -> Option<f64> {
     loop {
-        print!("Введите желаемый балл (можно дробный: 17.5 или 17,5): ");
+        print!("Введите желаемый балл (например 3,5): ");
         io::stdout().flush().expect("failed to flush stdout");
 
         let mut input = String::new();
@@ -332,7 +378,7 @@ fn read_target_score() -> Option<f64> {
         let normalized = trimmed.replace(',', ".");
         match normalized.parse::<f64>() {
             Ok(value) if value >= 0.0 => return Some(value),
-            _ => println!("Не удалось распознать число. Пример: 18 или 17.5"),
+            _ => println!("Не удалось распознать число. Пример: 4 или 3.5 или 3,5"),
         }
     }
 }
@@ -356,9 +402,9 @@ fn pause_before_exit() {
 }
 
 fn main() {
-    println!("Math Strat");
-    println!("Ищу самый дешевый план на заданный результат с вероятностью 90%.");
-    println!("Немного подождите...");
+    println!("=== СТРАТЕГИЯ НА КРАСНЫЙ МАТАН ===");
+    println!("Происходит прогрев кэша (гоев)");
+    println!("Немного подождите... (это один раз происходит)");
 
     let started_at = Instant::now();
     let best = load_or_compute_best();
@@ -377,9 +423,11 @@ fn main() {
                 println!("Запрошено: {}, округлено вверх до {}.", format_score(target), score);
             }
             println!("Опры: {} шт", entry.k_def);
-            println!("Формулировки к докам: {} шт", entry.k_pf);
+            println!("Формулировки к красным докам: {} шт", entry.k_red_pf);
+            println!("Формулировки к черным докам: {} шт", entry.k_black_pf);
             println!("Чистые формулировки: {} шт", entry.k_extra);
-            println!("Доки: {} шт", entry.k_pp);
+            println!("Красные доки: {} шт", entry.k_red_pp);
+            println!("Черные доки: {} шт", entry.k_black_pp);
             println!("Стоимость: {}", format_cost(entry.cost));
         }
         None => println!("\nМаксимум {MAX_TOTAL_SCORE}"),
