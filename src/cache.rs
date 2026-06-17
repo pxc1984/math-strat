@@ -6,17 +6,17 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::{env, fs};
 
-const CACHE_VERSION: &str = "v6";
+const CACHE_VERSION: &str = "v7";
 
 fn cache_file_path() -> PathBuf {
     env::temp_dir()
         .join("math-strat")
-        .join(format!("best-{CACHE_VERSION}.json"))
+        .join(format!("best-{CACHE_VERSION}.bin"))
 }
 
 pub fn load_best_from_cache(path: &PathBuf) -> Option<BestTable> {
-    let content = fs::read_to_string(path).ok()?;
-    let best: BestTable = serde_json::from_str(&content).ok()?;
+    let content = fs::read(path).ok()?;
+    let best: BestTable = bincode::deserialize(&content).ok()?;
     if best.len() == MAX_TOTAL_SCORE + 1 {
         Some(best)
     } else {
@@ -29,7 +29,7 @@ pub fn save_best_to_cache(path: &PathBuf, best: &BestTable) {
         let _ = fs::create_dir_all(parent);
     }
 
-    if let Ok(content) = serde_json::to_string(best) {
+    if let Ok(content) = bincode::serialize(best) {
         let _ = fs::write(path, content);
     }
 }
