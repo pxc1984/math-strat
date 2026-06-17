@@ -1,0 +1,37 @@
+pub const DEFS_COSTS: [u32; 24] = [
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 3,
+];
+pub const RED_PROOFS_FORMS_COSTS: [f64; 21] = [
+    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+    1.0, 1.0,
+];
+pub const BLACK_PROOFS_FORMS_COSTS: [f64; 12] =
+    [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0];
+pub const RED_PROOFS_BODY_COSTS: [u32; 21] = [
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+];
+pub const BLACK_PROOFS_BODY_COSTS: [u32; 12] = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3];
+pub const TOTAL_DEF_QUESTIONS: u32 = 3;
+pub const TOTAL_FORM_QUESTIONS: u32 = 2;
+pub const TOTAL_RED_PROOF_QUESTIONS: u32 = 3;
+pub const TOTAL_BLACK_PROOF_QUESTIONS: u32 = 1;
+pub const DEFINITION_QUESTION_SCORE: usize = 1;
+pub const FORMULATION_QUESTION_SCORE: usize = 1;
+pub const RED_PROOF_FORMULATION_SCORE: usize = 1;
+pub const RED_PROOF_BODY_SCORE: usize = 2;
+pub const BLACK_PROOF_FORMULATION_SCORE: usize = 1;
+pub const BLACK_PROOF_BODY_SCORE: usize = 3;
+pub const MAX_TOTAL_SCORE: usize = TOTAL_DEF_QUESTIONS as usize * DEFINITION_QUESTION_SCORE
+    + TOTAL_FORM_QUESTIONS as usize * FORMULATION_QUESTION_SCORE
+    + TOTAL_RED_PROOF_QUESTIONS as usize * (RED_PROOF_FORMULATION_SCORE + RED_PROOF_BODY_SCORE)
+    + TOTAL_BLACK_PROOF_QUESTIONS as usize
+        * (BLACK_PROOF_FORMULATION_SCORE + BLACK_PROOF_BODY_SCORE);
+pub const TARGET_SCORE_COUNT: usize = MAX_TOTAL_SCORE + 1;
+pub const TOTAL_DEF_CARDS: u32 = 24;
+pub const TOTAL_FORM_CARDS: u32 = 56;
+pub const TOTAL_RED_PROOF_CARDS: u32 = 21;
+pub const TOTAL_BLACK_PROOF_CARDS: u32 = 12;
+pub const TOTAL_PROOF_QUESTIONS: u32 = TOTAL_RED_PROOF_QUESTIONS + TOTAL_BLACK_PROOF_QUESTIONS;
+pub const TOTAL_FORM_CARDS_AFTER_PROOFS: u32 = TOTAL_FORM_CARDS - TOTAL_PROOF_QUESTIONS;
+pub const MAX_PROOF_FORM_CARDS: usize = (TOTAL_RED_PROOF_CARDS + TOTAL_BLACK_PROOF_CARDS) as usize;
+pub const MAX_DRAWN_PROOF_FORMS: usize = 4;
