@@ -1,3 +1,4 @@
+use colored::{Color, ColoredString, Colorize};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -80,6 +81,18 @@ struct ProofConfig {
     k_red_pp: u8,
     k_black_pp: u8,
     outcomes: Vec<ProofOutcome>,
+}
+
+fn label(text: &str, color: Color) -> ColoredString {
+    text.color(color).bold()
+}
+
+fn status_line(text: &str, color: Color, message: impl std::fmt::Display) -> String {
+    format!("{:>12} {}", label(text, color), message)
+}
+
+fn field_line(text: &str, color: Color, value: impl std::fmt::Display) -> String {
+    format!("{:>12} {}", label(text, color), value)
 }
 
 fn comb(n: u32, k: u32) -> f64 {
@@ -470,14 +483,25 @@ fn render_progress_line(progress: &ProgressTracker) -> String {
         format_duration(Duration::from_secs_f64(remaining as f64 / speed.max(0.001)))
     };
 
+    let ratio_percent = ratio * 100.0;
+    let bar = format!("{:<width$}", "#".repeat(filled.min(PROGRESS_BAR_WIDTH)), width = PROGRESS_BAR_WIDTH);
+    let colored_bar = if ratio_percent >= 100.0 {
+        bar.green().to_string()
+    } else if ratio_percent >= 50.0 {
+        bar.yellow().to_string()
+    } else {
+        bar.cyan().to_string()
+    };
+
     format!(
-        "\rПрогресс: [{bar:<width$}] {percent:>5.1}% | {completed}/{total} | {speed:>8.0} ит/с | осталось {eta}",
-        bar = "#".repeat(filled.min(PROGRESS_BAR_WIDTH)),
-        width = PROGRESS_BAR_WIDTH,
-        percent = ratio * 100.0,
-        total = progress.total,
-        speed = speed,
-        eta = eta,
+        "\r{}: [{}] {} | {} | {} | {} {}",
+        "Прогресс".bold(),
+        colored_bar,
+        format!("{ratio_percent:>5.1}%").blue(),
+        format!("{completed}/{}", progress.total).dimmed(),
+        format!("{speed:>8.0} ит/с").magenta(),
+        "осталось".dimmed(),
+        eta,
     )
 }
 
@@ -591,7 +615,7 @@ fn load_or_compute_best() -> BestTable {
 
 fn read_target_score() -> Option<f64> {
     loop {
-        print!("Введите желаемый балл (например 3.5): ");
+        print!("{} {}: ", "Введите желаемый балл", "(например 3.5)".cyan().bold());
         io::stdout().flush().expect("failed to flush stdout");
 
         let mut input = String::new();
@@ -601,14 +625,21 @@ fn read_target_score() -> Option<f64> {
 
         let trimmed = input.trim();
         if trimmed.is_empty() {
-            println!("Пустой ввод. Попробуйте еще раз.");
+            println!(
+                "{}",
+                status_line("warning:", Color::Yellow, "Пустой ввод. Попробуйте еще раз.")
+            );
             continue;
         }
 
         let normalized = trimmed.replace(',', ".");
         match normalized.parse::<f64>() {
             Ok(value) if value >= 0.0 => return Some(value),
-            _ => println!("Не удалось распознать число. Пример: 4 или 3.5"),
+            _ => println!(
+                "{} {}",
+                status_line("error:", Color::Red, "Не удалось распознать число."),
+                "Пример: 4 или 3.5".cyan().bold()
+            ),
         }
     }
 }
@@ -632,19 +663,37 @@ fn pause_before_exit() {
 }
 
 fn main() {
-    println!("=== СТРАТЕГИЯ НА КРАСНЫЙ МАТАН ===");
-    println!("Происходит прогрев кэша (гоев)");
-    println!("Немного подождите... (это один раз происходит)");
+    println!("{}", status_line("Запуск", Color::Magenta, "Стратегия на красный матан"));
+    println!("{}", status_line("Кэш", Color::Cyan, "Происходит прогрев кэша (гоев)"));
+    println!("{}", status_line("note:", Color::Blue, "Немного подождите... (это один раз происходит)"));
 
     let started_at = Instant::now();
     let best = load_or_compute_best();
     println!(
-        "Подготовка завершена за {}.",
-        format_duration(started_at.elapsed())
+        "{}",
+        status_line(
+            "Готово",
+            Color::Green,
+            format!("Подготовка завершена за {}.", format_duration(started_at.elapsed()).bold())
+        )
     );
 
-    println!("Доступный диапазон: от 0 до {MAX_TOTAL_SCORE} баллов.");
-    println!("Для дробного запроса используется ближайший больший целый балл.");
+    println!(
+        "{}",
+        status_line(
+            "Диапазон",
+            Color::Blue,
+            format!("от {} до {} баллов.", "0".bold(), MAX_TOTAL_SCORE.to_string().bold())
+        )
+    );
+    println!(
+        "{}",
+        status_line(
+            "Правило",
+            Color::Blue,
+            "Для дробного запроса используется ближайший больший целый балл.".dimmed()
+        )
+    );
 
     let target = read_target_score().expect("target score input unexpectedly missing");
     let requested_score = resolve_requested_score(target);
@@ -656,23 +705,79 @@ fn main() {
             .map(|entry| (score, entry))
     }) {
         Some((score, entry)) => {
-            println!("\nПлан на {} баллов (90%):", score);
+            println!(
+                "\n{}",
+                status_line(
+                    "План",
+                    Color::Green,
+                    format!("на {} баллов (p90 сдаст)", score.to_string().bold())
+                )
+            );
             if (target - score as f64).abs() > f64::EPSILON {
                 println!(
-                    "Запрошено: {}, округлено вверх до {}.",
-                    format_score(target),
-                    score
+                    "{}",
+                    status_line(
+                        "warning:",
+                        Color::Yellow,
+                        format!(
+                            "Запрошено {}, округлено вверх до {}.",
+                            format_score(target).bold(),
+                            score.to_string().bold()
+                        )
+                    )
                 );
             }
-            println!("Опры: {} шт", entry.k_def);
-            println!("Формулировки к красным докам: {} шт", entry.k_red_pf);
-            println!("Формулировки к черным докам: {} шт", entry.k_black_pf);
-            println!("Чистые формулировки: {} шт", entry.k_extra);
-            println!("Красные доки: {} шт", entry.k_red_pp);
-            println!("Черные доки: {} шт", entry.k_black_pp);
-            println!("Стоимость: {}", format_cost(entry.cost));
+            println!("{}", field_line("Опры", Color::Cyan, format!("{} шт", entry.k_def.to_string().bold())));
+            println!(
+                "{}",
+                field_line(
+                    "формулировки",
+                    Color::Red,
+                    format!("{} шт", entry.k_red_pf.to_string().bold())
+                )
+            );
+            println!(
+                "{}",
+                field_line(
+                    "формулировки",
+                    Color::BrightBlack,
+                    format!("{} шт", entry.k_black_pf.to_string().bold())
+                )
+            );
+            println!(
+                "{}",
+                field_line(
+                    "Доп? формулировки",
+                    Color::Blue,
+                    format!("{} шт", entry.k_extra.to_string().bold())
+                )
+            );
+            println!(
+                "{}",
+                field_line(
+                    "доки",
+                    Color::Red,
+                    format!("{} шт", entry.k_red_pp.to_string().bold())
+                )
+            );
+            println!(
+                "{}",
+                field_line(
+                    "доки",
+                    Color::BrightBlack,
+                    format!("{} шт", entry.k_black_pp.to_string().bold())
+                )
+            );
+            println!("{}", field_line("Стоимость (условно)", Color::Green, format_cost(entry.cost).bold()));
         }
-        None => println!("\nМаксимум {MAX_TOTAL_SCORE}"),
+        None => println!(
+            "\n{}",
+            status_line(
+                "error:",
+                Color::Red,
+                format!("Максимум {}", MAX_TOTAL_SCORE.to_string().bold())
+            )
+        ),
     }
 
     pause_before_exit();
