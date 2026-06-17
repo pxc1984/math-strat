@@ -4,8 +4,8 @@ build:
 	cargo build --release
 	RUSTFLAGS='-C target-feature=+crt-static' cargo build --target x86_64-pc-windows-gnu --release
 	mkdir -p dist
-	cp target/release/math-strat dist
-	cp target/x86_64-pc-windows-gnu/release/math-strat.exe dist
+	cp target/release/math-strat dist/math-strat
+	cp target/x86_64-pc-windows-gnu/release/math-strat.exe dist/math-strat.x86_64-pc-windows-gnu.exe
 
 clean:
 	rm -rf dist
