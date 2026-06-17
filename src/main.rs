@@ -1,5 +1,10 @@
 use cached::proc_macro::cached;
+use serde::{Deserialize, Serialize};
+use std::env;
+use std::fs;
 use std::io::{self, Write};
+use std::path::PathBuf;
+use std::time::Instant;
 
 const DEFS_COSTS: [u32; 24] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4];
 const FORMS_COSTS: [f64; 49] = [
@@ -20,6 +25,19 @@ const TOTAL_PROOF_CARDS: u32 = 33;
 
 type Outcomes = Vec<(u8, f64)>;
 type Distribution = [f64; MAX_TOTAL_SCORE + 1];
+
+const CACHE_VERSION: &str = "v1";
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+struct BestEntry {
+    cost: f64,
+    k_def: u8,
+    k_extra: u8,
+    k_pf: u8,
+    k_pp: u8,
+}
+
+type BestTable = Vec<Option<BestEntry>>;
 
 fn comb(n: u32, k: u32) -> f64 {
     if k > n {
@@ -219,15 +237,13 @@ fn check_score(distribution: &Distribution) -> usize {
     0
 }
 
-fn main() {
-    println!("Немного подождите");
-
+fn compute_best() -> BestTable {
     let def_cost_prefix = prefix_sums_u32(&DEFS_COSTS);
     let form_cost_prefix = prefix_sums_f64(&FORMS_COSTS);
     let proof_form_cost_prefix = prefix_sums_f64(&PROOFS_FORMS_COSTS);
     let proof_body_cost_prefix = prefix_sums_u32(&PROOFS_BODY_COSTS);
 
-    let mut best: Vec<Option<(f64, u8, u8, u8, u8)>> = vec![None; MAX_TOTAL_SCORE + 1];
+    let mut best: BestTable = vec![None; MAX_TOTAL_SCORE + 1];
 
     for k_def in 0..=DEFS_COSTS.len() {
         let def_cost = def_cost_prefix[k_def];
@@ -243,34 +259,133 @@ fn main() {
                     let score = check_score(&distribution);
 
                     match best[score] {
-                        Some((best_cost, ..)) if best_cost <= total_cost => {}
-                        _ => best[score] = Some((total_cost, k_def as u8, k_extra as u8, k_pf as u8, k_pp as u8)),
+                        Some(entry) if entry.cost <= total_cost => {}
+                        _ => {
+                            best[score] = Some(BestEntry {
+                                cost: total_cost,
+                                k_def: k_def as u8,
+                                k_extra: k_extra as u8,
+                                k_pf: k_pf as u8,
+                                k_pp: k_pp as u8,
+                            })
+                        }
                     }
                 }
             }
         }
     }
 
-    print!("Сколько хотите баллов (только число): ");
-    io::stdout().flush().expect("failed to flush stdout");
+    best
+}
 
-    let mut input = String::new();
-    io::stdin()
-        .read_line(&mut input)
-        .expect("failed to read target score");
-    let target = input.trim().parse::<usize>();
+fn cache_file_path() -> PathBuf {
+    env::temp_dir().join("math-strat").join(format!("best-{CACHE_VERSION}.json"))
+}
 
-    match target.ok().and_then(|score| best.get(score).copied().flatten()) {
-        Some((cost, kd, k_extra, kpf, kpp)) => {
-            println!("\nПлан на {} баллов (90%):", input.trim());
-            println!("Опры: {} шт", kd);
-            println!("Формулировки к докам: {} шт", kpf);
-            println!("Чистые формулировки: {} шт", k_extra);
-            println!("Доки: {} шт", kpp);
-            println!("Стоимость: {}", format_cost(cost));
-        }
-        None => println!("\nМаксимум 18"),
+fn load_best_from_cache(path: &PathBuf) -> Option<BestTable> {
+    let content = fs::read_to_string(path).ok()?;
+    let best: BestTable = serde_json::from_str(&content).ok()?;
+    if best.len() == MAX_TOTAL_SCORE + 1 {
+        Some(best)
+    } else {
+        None
     }
+}
+
+fn save_best_to_cache(path: &PathBuf, best: &BestTable) {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+
+    if let Ok(content) = serde_json::to_string(best) {
+        let _ = fs::write(path, content);
+    }
+}
+
+fn load_or_compute_best() -> BestTable {
+    let cache_path = cache_file_path();
+    if let Some(best) = load_best_from_cache(&cache_path) {
+        return best;
+    }
+
+    let best = compute_best();
+    save_best_to_cache(&cache_path, &best);
+    best
+}
+
+fn read_target_score() -> Option<f64> {
+    loop {
+        print!("Введите желаемый балл (можно дробный: 17.5 или 17,5): ");
+        io::stdout().flush().expect("failed to flush stdout");
+
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .expect("failed to read target score");
+
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            println!("Пустой ввод. Попробуйте еще раз.");
+            continue;
+        }
+
+        let normalized = trimmed.replace(',', ".");
+        match normalized.parse::<f64>() {
+            Ok(value) if value >= 0.0 => return Some(value),
+            _ => println!("Не удалось распознать число. Пример: 18 или 17.5"),
+        }
+    }
+}
+
+fn resolve_requested_score(target: f64) -> Option<usize> {
+    if target > MAX_TOTAL_SCORE as f64 {
+        return None;
+    }
+
+    Some(target.ceil() as usize)
+}
+
+fn pause_before_exit() {
+    #[cfg(windows)]
+    {
+        print!("\nНажмите Enter, чтобы закрыть окно...");
+        let _ = io::stdout().flush();
+        let mut buffer = String::new();
+        let _ = io::stdin().read_line(&mut buffer);
+    }
+}
+
+fn main() {
+    println!("Math Strat");
+    println!("Ищу самый дешевый план на заданный результат с вероятностью 90%.");
+    println!("Немного подождите...");
+
+    let started_at = Instant::now();
+    let best = load_or_compute_best();
+    println!("Подготовка завершена за {:.2} сек.", started_at.elapsed().as_secs_f64());
+
+    println!("Доступный диапазон: от 0 до {MAX_TOTAL_SCORE} баллов.");
+    println!("Для дробного запроса используется ближайший больший целый балл.");
+
+    let target = read_target_score().expect("target score input unexpectedly missing");
+    let requested_score = resolve_requested_score(target);
+
+    match requested_score.and_then(|score| best.get(score).copied().flatten().map(|entry| (score, entry))) {
+        Some((score, entry)) => {
+            println!("\nПлан на {} баллов (90%):", score);
+            if (target - score as f64).abs() > f64::EPSILON {
+                println!("Запрошено: {}, округлено вверх до {}.", format_score(target), score);
+            }
+            println!("Опры: {} шт", entry.k_def);
+            println!("Формулировки к докам: {} шт", entry.k_pf);
+            println!("Чистые формулировки: {} шт", entry.k_extra);
+            println!("Доки: {} шт", entry.k_pp);
+            println!("Стоимость: {}", format_cost(entry.cost));
+        }
+        None => println!("\nМаксимум {MAX_TOTAL_SCORE}"),
+    }
+
+    pause_before_exit();
 }
 
 fn format_cost(cost: f64) -> String {
@@ -278,5 +393,13 @@ fn format_cost(cost: f64) -> String {
         format!("{:.0}", cost)
     } else {
         format!("{:.1}", cost)
+    }
+}
+
+fn format_score(score: f64) -> String {
+    if (score.fract() - 0.0).abs() < f64::EPSILON {
+        format!("{:.0}", score)
+    } else {
+        format!("{:.1}", score)
     }
 }
