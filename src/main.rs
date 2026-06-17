@@ -1,4 +1,5 @@
 use cached::proc_macro::cached;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
@@ -274,54 +275,71 @@ fn compute_best() -> BestTable {
     let proof_form_cost_prefix = prefix_sums_f64(&PROOFS_FORMS_COSTS);
     let proof_body_cost_prefix = prefix_sums_u32(&PROOFS_BODY_COSTS);
 
-    let mut best: BestTable = vec![None; MAX_TOTAL_SCORE + 1];
+    (0..=DEFS_COSTS.len())
+        .into_par_iter()
+        .map(|k_def| {
+            let def_cost = def_cost_prefix[k_def];
+            let mut best: BestTable = vec![None; MAX_TOTAL_SCORE + 1];
 
-    for k_def in 0..=DEFS_COSTS.len() {
-        let def_cost = def_cost_prefix[k_def];
-        for k_red_pf in 0..=TOTAL_RED_PROOF_CARDS as usize {
-            for k_black_pf in 0..=TOTAL_BLACK_PROOF_CARDS as usize {
-                let total_pf = k_red_pf + k_black_pf;
-                let proof_form_cost = proof_form_cost_prefix[total_pf];
-                for k_red_pp in 0..=k_red_pf {
-                    for k_black_pp in 0..=k_black_pf {
-                        let total_pp = k_red_pp + k_black_pp;
-                        let proof_body_cost = proof_body_cost_prefix[total_pp];
-                        for k_extra in 0..=(FORMS_COSTS.len() - total_pf) {
-                    let total_cost =
-                        def_cost + proof_form_cost + proof_body_cost + form_cost_prefix[k_extra];
+            for k_red_pf in 0..=TOTAL_RED_PROOF_CARDS as usize {
+                for k_black_pf in 0..=TOTAL_BLACK_PROOF_CARDS as usize {
+                    let total_pf = k_red_pf + k_black_pf;
+                    let proof_form_cost = proof_form_cost_prefix[total_pf];
+                    for k_red_pp in 0..=k_red_pf {
+                        for k_black_pp in 0..=k_black_pf {
+                            let total_pp = k_red_pp + k_black_pp;
+                            let proof_body_cost = proof_body_cost_prefix[total_pp];
+                            for k_extra in 0..=(FORMS_COSTS.len() - total_pf) {
+                                let total_cost = def_cost
+                                    + proof_form_cost
+                                    + proof_body_cost
+                                    + form_cost_prefix[k_extra];
 
-                            let distribution = ticket_pmf(
-                                k_def as u8,
-                                k_red_pf as u8,
-                                k_black_pf as u8,
-                                k_red_pp as u8,
-                                k_black_pp as u8,
-                                k_extra as u8,
-                            );
-                    let score = check_score(&distribution);
+                                let distribution = ticket_pmf(
+                                    k_def as u8,
+                                    k_red_pf as u8,
+                                    k_black_pf as u8,
+                                    k_red_pp as u8,
+                                    k_black_pp as u8,
+                                    k_extra as u8,
+                                );
+                                let score = check_score(&distribution);
 
-                    match best[score] {
-                        Some(entry) if entry.cost <= total_cost => {}
-                        _ => {
-                            best[score] = Some(BestEntry {
-                                cost: total_cost,
-                                k_def: k_def as u8,
-                                k_extra: k_extra as u8,
-                                k_red_pf: k_red_pf as u8,
-                                k_black_pf: k_black_pf as u8,
-                                k_red_pp: k_red_pp as u8,
-                                k_black_pp: k_black_pp as u8,
-                            })
-                        }
-                    }
+                                match best[score] {
+                                    Some(entry) if entry.cost <= total_cost => {}
+                                    _ => {
+                                        best[score] = Some(BestEntry {
+                                            cost: total_cost,
+                                            k_def: k_def as u8,
+                                            k_extra: k_extra as u8,
+                                            k_red_pf: k_red_pf as u8,
+                                            k_black_pf: k_black_pf as u8,
+                                            k_red_pp: k_red_pp as u8,
+                                            k_black_pp: k_black_pp as u8,
+                                        })
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
-        }
-    }
 
-    best
+            best
+        })
+        .reduce(
+            || vec![None; MAX_TOTAL_SCORE + 1],
+            |mut acc, best| {
+                for score in 0..=MAX_TOTAL_SCORE {
+                    if let Some(candidate) = best[score] {
+                        if !acc[score].is_some_and(|entry| entry.cost <= candidate.cost) {
+                            acc[score] = Some(candidate);
+                        }
+                    }
+                }
+                acc
+            },
+        )
 }
 
 fn cache_file_path() -> PathBuf {
